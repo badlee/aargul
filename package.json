@@ -1,0 +1,50 @@
+{
+  "name": "aargul",
+  "version": "0.5.10",
+  "description": "Express Router application archive",
+  "scripts": {
+    "test": "mocha -R spec",
+    "test:format": "npm run format:prettier:raw -- --check",
+    "format": "npm run format:prettier",
+    "format:prettier": "npm run format:prettier:raw -- --write",
+    "format:prettier:raw": "prettier \"**/*.{js,yml,json}\""
+  },
+  "keywords": [
+    "zip",
+    "methods",
+    "archive",
+    "unzip"
+  ],
+  "homepage": "https://github.com/badlee/aargul",
+  "author": "Nasca Iacob <sy@another-d-mention.ro> (https://github.com/badlee)",
+  "bugs": {
+    "email": "sy@another-d-mention.ro",
+    "url": "https://github.com/badlee/aargul/issues"
+  },
+  "license": "MIT",
+  "files": [
+    "aargul.js",
+    "headers",
+    "methods",
+    "util",
+    "LICENSE"
+  ],
+  "main": "aargul.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/badlee/aargul.git"
+  },
+  "engines": {
+    "node": ">=12"
+  },
+  "devDependencies": {
+    "@types/connect": "^3.4.35",
+    "@types/express": "^4.17.17",
+    "@types/koa": "^2.13.6",
+    "@types/next": "^9.0.0",
+    "chai": "^4.3.4",
+    "mocha": "^10.2.0",
+    "prettier": "^2.2.1",
+    "rimraf": "^3.0.2"
+  }
+}
