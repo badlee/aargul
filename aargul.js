@@ -51,8 +51,6 @@
  * 
  * @typedef {Object} AargulRouter
  * @property {import("express").RequestHandler} express the ExpressJs middleware
- * @property {import("koa").Middleware} koa the Koa middleware
- * @property {import("next/server").NextMiddleware} next the NextJs middleware
  * @property {import("connect").NextHandleFunction} connect the Connect middleware
  * @property {PackageInfo} package return the package.json object
  * @property {boolean} started return true if the router is started
@@ -501,14 +499,6 @@ Arrgul.open = async function (file, options) {
     /** @type {import("connect").NextHandleFunction} */
     returnedObject.connect = (...args) => {
         request(RequesType.CONNECT, ...args).then((args) => application(...args));
-    }
-    /** @type {import("next/server").NextMiddleware} */
-    returnedObject.next = (...args) => {
-        request(RequesType.NEXT, ...args).then((args) => application(...args));
-    }
-    /** @type {import("koa").Middleware} */
-    returnedObject.koa = (ctx, next) => {
-        request(RequesType.KOA, ctx, next).then((args) => application(...args));
     }
     returnedObject.stop = async () => {
         var isExit = waiter();
