@@ -2,6 +2,7 @@ const Entry = require("./entry");
 const Headers = require("../headers");
 const Utils = require(".");
 
+
 module.exports = function (/*Buffer|null*/ inBuffer, /** object */ options) {
     var entryList = [],
         entryTable = {},
@@ -157,8 +158,8 @@ module.exports = function (/*Buffer|null*/ inBuffer, /** object */ options) {
         /**
          * Returns a reference to the entry with the given name or null if entry is inexistent
          *
-         * @param entryName
-         * @return Entry
+         * @param {String} entryName
+         * @return {Entry}
          */
         getEntry: function (/*String*/ entryName) {
             if (!loadedEntries) {
@@ -170,7 +171,7 @@ module.exports = function (/*Buffer|null*/ inBuffer, /** object */ options) {
         /**
          * Adds the given entry to the entry list
          *
-         * @param entry
+         * @param {Entry} entry
          */
         setEntry: function (/*Entry*/ entry) {
             if (!loadedEntries) {
@@ -185,7 +186,7 @@ module.exports = function (/*Buffer|null*/ inBuffer, /** object */ options) {
          * Removes the entry with the given name from the entry list.
          *
          * If the entry is a directory, then all nested files and directories will be removed
-         * @param entryName
+         * @param {String} entryName
          */
         deleteEntry: function (/*String*/ entryName) {
             if (!loadedEntries) {
@@ -208,8 +209,8 @@ module.exports = function (/*Buffer|null*/ inBuffer, /** object */ options) {
         /**
          *  Iterates and returns all nested files and directories of the given entry
          *
-         * @param entry
-         * @return Array
+         * @param {Entry} entry
+         * @return {Array.<Entry>}
          */
         getEntryChildren: function (/*Entry*/ entry) {
             if (!loadedEntries) {

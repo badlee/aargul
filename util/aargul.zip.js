@@ -4,6 +4,44 @@ const fs = require("fs");
 const Entry = require("./entry");
 const archiveFile = require("./archive");
 
+/** 
+ * @typedef AargulArchive 
+ *
+ * @property {(mode?: number | undefined) => boolean} access
+ * @property {String | null} filename
+ * @property {import('fs').Stats | null} stats
+ * @property {(entry: any, pass: any) => any} readFile
+ * @property {(entry: any, callback: any) => void} readFileAsync
+ * @property {(entry: any, encoding: any) => any} readAsText
+ * @property {(entry: any, callback: any, encoding: Object) => void} readAsTextAsync
+ * @property {(entry: any) => void} deleteFile
+ * @property {(comment: any) => void} addZipComment
+ * @property {() => any} getZipComment
+ * @property {(entry: any, comment: any) => void} addEntryComment
+ * @property {(entry: any) => any} getEntryComment
+ * @property {(entryName: any, content: any) => void} updateFile
+ * @property {(localPath: any, archivePath: any, zipName: any, comment: any) => void} addLocalFile
+ * @property {(localPath: any, archivePath: any, filter: any, attr: number | any) => void} addLocalFolder
+ * @property {(localPath: any, callback: any, archivePath: any, filter: any) => void} addLocalFolderAsync
+ * @property {(localPath: string, props: { archivePath: string; filter: RegExp | Function; }) => Promise<any>} addLocalFolderPromise
+ * @property {(entryName: string, content: Buffer | string | null, comment?: string | undefined, attr?: number | any) => void} addFile
+ * @property {() => Array.<Entry>} getEntries
+ * @property {(name: any) => Entry|null} getEntry
+ * @property {() => number} getEntryCount
+ * @property {(callback: any) => any} forEach
+ * @property {(entry: any, targetPath: any, maintainEntryPath: any, overwrite: any, keepOriginalPermission: any, outFileName: any) => boolean} extractEntryTo
+ * @property {(pass: any) => boolean} test
+ * @property {(targetPath: any, overwrite: any, keepOriginalPermission: any, pass: any) => void} extractAllTo
+ * @property {(targetPath: any, overwrite: any, keepOriginalPermission: any, callback: any) => void} extractAllToAsync
+ * @property {(targetFileName: any, callback?: any, ...args: any[]) => void} writeFile
+ * @property {(targetFileName: any, props?: any) => Promise<any>} writeFilePromise
+ * @property {(targetFileName: any, props: any, callback: any) => void | Promise<any>} save
+ * @property {() => Promise<any>} toBufferPromise
+ * @property {typeof toBuffer} toBuffer
+ * @property {typeof toBuffer} toBuffer
+ * */
+
+
 
 const get_Bool = (val, def) => (typeof val === "boolean" ? val : def);
 const get_Str = (val, def) => (typeof val === "string" ? val : def);
@@ -26,9 +64,9 @@ const defaultOptions = {
  * @param {Boolean} [options.readEntries]
  * @param {Number} [options.method]
  * @param {Number| null} [options.fs]
- * @returns 
+ * @returns  {AargulArchive} AargulArchive Instance
  */
-function ArrgulArchive (/**String*/ input, /** object */ options) {
+function AargulArchive (/**String*/ input, /** object */ options) {
     let inBuffer = null;
     // create object based default options, allowing them to be overwritten
     const opts = Object.assign(Object.create(null), defaultOptions);
@@ -94,11 +132,34 @@ function ArrgulArchive (/**String*/ input, /** object */ options) {
         // convert windows file separators and normalize
         return join(".", normalize(sep + archivePath.split("\\").join(sep) + sep));
     }
-
+    var _stats = Utils.Constants.FILE == opts.method ? filetools.fs.statSync(opts.filename) : null;
     // @ts-ignore
-    return {
+    var a = {
+        filename : Utils.Constants.FILE == opts.method ? opts.filename : null,
         /** @type {import('fs').Stats | null} */
-        stats : Utils.Constants.FILE == opts.method ? filetools.fs.statSync(opts.filename) : null,
+        stats : _stats,
+        /**
+         * Synchronously tests a user's permissions for the file or directory specified by path. 
+         * The mode argument is an optional integer that specifies the accessibility checks to be performed. 
+         * 
+         * @param {number} [mode] mode should be either the value fs.constants.F_OK or a mask consisting of the bitwise OR of any of 
+         *      - fs.constants.R_OK
+         *      - fs.constants.W_OK
+         *      - fs.constants.X_OK 
+         *
+         * @return {boolean} True if access is allowed
+         */
+        access: (mode)=>{
+            try{
+                if(Utils.Constants.FILE == opts.method){
+                    filetools.fs.accessSync(opts.filename,mode);
+                    return true;
+                }
+                throw "NOT A FILE";
+            }catch(e){
+                return false
+            }
+        },
         /**
          * Extracts the given entry from the archive and returns the content as a Buffer object
          * @param entry Entry object or String with the full path of the entry
@@ -738,6 +799,14 @@ function ArrgulArchive (/**String*/ input, /** object */ options) {
             // call the callback if fileEntries was empty
             done();
         },
+        save: function (/**String*/ targetFileName, /* object */props, /**Function*/ callback) {
+            if(typeof props == "function"){
+                [props, callback] = [callback, props]
+            }
+            if(callback)
+                return this.writeFile(targetFileName, props, callback);
+            return this.writeFilePromise(targetFileName, props);
+        },
 
         /**
          * Writes the newly created file to disk at the specified location or if a zip was opened and no ``targetFileName`` is provided, it will overwrite the opened zip
@@ -745,7 +814,11 @@ function ArrgulArchive (/**String*/ input, /** object */ options) {
          * @param targetFileName
          * @param [callback]
          */
-        writeFile: function (/**String*/ targetFileName, /**Function*/ callback) {
+        writeFile: function (/**String*/ targetFileName, /* object */props, /**Function*/ callback) {
+            if(typeof props == "function"){
+                [props, callback] = [callback, props]
+            }
+            const { overwrite, perm } = Object.assign({ overwrite: true }, props?? {});
             if (arguments.length === 1) {
                 if (typeof targetFileName === "function") {
                     callback = targetFileName;
@@ -760,13 +833,13 @@ function ArrgulArchive (/**String*/ input, /** object */ options) {
 
             var zipData = _archive.compressToBuffer();
             if (zipData) {
-                var ok = filetools.writeFileTo(targetFileName, zipData, true);
-                if (typeof callback === "function") callback(!ok ? new Error("failed") : null, "");
+                var ok = filetools.writeFileTo(targetFileName, zipData, overwrite, perm );
+                if (typeof callback === "function") callback(!ok ? new Error(`AARGUL: Wasn't able to write ${targetFileName}`) : null, "");
             }
         },
 
         writeFilePromise: function (/**String*/ targetFileName, /* object */ props) {
-            const { overwrite, perm } = Object.assign({ overwrite: true }, props);
+            const { overwrite, perm } = Object.assign({ overwrite: true }, props ?? {} );
 
             return new Promise((resolve, reject) => {
                 // find file name
@@ -774,7 +847,7 @@ function ArrgulArchive (/**String*/ input, /** object */ options) {
                 if (!targetFileName) reject("AARGUL: File Name Missing");
 
                 this.toBufferPromise().then((zipData) => {
-                    const ret = (done) => (done ? resolve(done) : reject("AARGUL: Wasn't able to write file"));
+                    const ret = (done) => (done ? resolve(done) : reject(`AARGUL: Wasn't able to write ${targetFileName}`));
                     filetools.writeFileToAsync(targetFileName, zipData, overwrite, perm, ret);
                 }, reject);
             });
@@ -801,6 +874,7 @@ function ArrgulArchive (/**String*/ input, /** object */ options) {
             return _archive.compressToBuffer();
         }
     };
+    return a;
 };
 
-module.exports = ArrgulArchive;
+module.exports = AargulArchive;

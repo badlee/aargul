@@ -1204,6 +1204,10 @@
       return this;
     };
   
+    EventEmitter.prototype.listener = function(type) {
+      this._events || init.call(this);
+      return this._events[type] ?? [];
+    }
     EventEmitter.prototype._on = function(type, listener, prepend, options) {
       if (typeof type === 'function') {
         this._onAny(type, listener);
@@ -1373,6 +1377,7 @@
         object.off = this.off.bind(this);
         object.emit = this.emit.bind(this);
         object.onAny = this.onAny.bind(this);
+        object.listener = this.listener.bind(this);
       }
     }
   

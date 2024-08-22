@@ -65,8 +65,9 @@
 
 /**
  * @callback RequestHandler
- * @param {Object} res
- * @param {import("net").Socket} socket
+ * @param {Object} rawBody
+ * @param {import("http").IncomingMessage} incomingMessage
+ * @param {import("http").ServerResponse} serverResponse
  * @param {import('express').NextFunction} next 
  */
 /**
@@ -85,7 +86,7 @@
  * @callback RouteHandlerMain
  * @param {String} method - url
  */
-if(typeof global.Bun == "undefined"){
+if (typeof global.Bun == "undefined") {
     const v8 = require('node:v8');
     v8.setFlagsFromString('--no-lazy');
     if (Number.parseInt(process.versions.node, 10) >= 12) {
@@ -93,10 +94,11 @@ if(typeof global.Bun == "undefined"){
     }
 }
 const swig = require('./swig/swig');
-const ArrgulArchive = require('./util/aargul.zip');
+const AargulArchive = require('./util/aargul.zip');
+var HttpProxy = require('./http-proxy');
+const qs = require('./util/querystrings')
 
 const pth = require("path");
-const { Socket, createServer } = require("net");
 const { readdirSync, statSync, existsSync, readFileSync, writeFileSync, unlinkSync } = require('fs');
 const {
     fork,
@@ -106,27 +108,52 @@ const { getByteCode, getHashes, encrypt, extendSwigEnv, encodeBase64FileName, wa
 const EventEmitter = require('./util/EventEmitter');
 const jsxLoader = require("./util/jsx");
 const { tmpdir } = require("os");
+const { connect, createServer } = require("net");
+const { ClientRequest } = require("http");
 const { RequesType } = request;
 /**
  * 
  * @param {String} directory - Path of the application dirname
- * @param {Array.<String>} [includeDirectory] - Path of the application dirname
+ * 
+ * @param {Object} [options] - Path of the application dirname
+ * @param {Array.<String>} [options.includeDirectory] - Path of the application dirname
+ * @param {boolean} [options.serverLess] - Check if it's server less application
+ * @param {boolean} [options.noTemplate] - Has Swig
+ * @param {boolean} [options.noLib] - Has Lib directory
+ * @param {boolean} [options.noAssets] - Has Assets
+ * @param {boolean} [options.noMiddlewares] - Has Middlewares
+ * @param {boolean} [options.noRoutes] - Has Routes
  */
 
-function Arrgul(directory, includeDirectory) {
+function Arrgul(directory, {
+    includeDirectory,
+    serverLess,
+    noTemplate,
+    noAssets,
+    noLib,
+    noMiddlewares,
+    noRoutes
+} = {}) {
+    var hasSwig = !(serverLess ?? noTemplate ?? false);
+    var hasAssets = !(serverLess ?? noAssets ?? false);
+    var hasLib = !(serverLess ?? noLib ?? false);
+    var hasMiddlewares = !(serverLess ?? noMiddlewares ?? false);
+    var hasRoutes = !(serverLess ?? noRoutes ?? false);
+
     if (!(this instanceof Arrgul)) {
         throw new TypeError("Class constructor Arrgul cannot be invoked without 'new'");
     }
-    var archive = ArrgulArchive();
+    var archive = AargulArchive();
     load(directory);
-    if(includeDirectory){
-        includeDirectory.forEach(file=>{
-            if(statSync(pth.join(directory, file)).isDirectory()){
-                archive.addLocalFolder(pth.join(directory,file),pth.join("/fs",file), undefined, undefined);
-            }else if(statSync(pth.join(directory, file)).isFile()){
-                archive.addLocalFile(pth.join(directory,file),pth.join("/fs",file), undefined, undefined);
+    if (includeDirectory) {
+        includeDirectory.forEach(file => {
+            if (statSync(pth.join(directory, file)).isDirectory()) {
+                archive.addLocalFolder(pth.join(directory, file), pth.join("/fs", file), undefined, undefined);
+                archive.addFile((pth.join("fs", file) + "/".replace(/\/+/g, "/")), null);
+            } else if (statSync(pth.join(directory, file)).isFile()) {
+                archive.addFile((pth.join("fs", file).replace(/\/+/g, "/")), readFileSync(pth.join(directory, file)));
             }
-        } )
+        })
     }
     /**
      * @type {RouteHandlerMain}
@@ -218,22 +245,24 @@ module.exports = {
         // add database
         archive.addFile(encrypt("pico.db", hash.toString("utf-8")).toString("hex"), encrypt(Buffer.from("{}", "utf-8"), hash.toString("utf-8")));
         // load assets
-        let assetsDir = pth.join(directory, "assets");
-        if (existsSync(assetsDir) && statSync(assetsDir).isDirectory()) {
-            function addFolder(filename, uri) {
-                if (existsSync(directory))
-                    if (statSync(filename).isDirectory()) {
-                        readdirSync(filename).forEach((file) =>
-                            addFolder(pth.join(filename, file), pth.join(uri, pth.basename(file)))
-                        );
-                    } else {
-                        addSecureFile(
-                            pth.join("/assets", uri),
-                            readFileSync(filename)
-                        )
-                    }
+        if (hasAssets) {
+            let assetsDir = pth.join(directory, "assets");
+            if (existsSync(assetsDir) && statSync(assetsDir).isDirectory()) {
+                function addFolder(filename, uri) {
+                    if (existsSync(directory))
+                        if (statSync(filename).isDirectory()) {
+                            readdirSync(filename).forEach((file) =>
+                                addFolder(pth.join(filename, file), pth.join(uri, pth.basename(file)))
+                            );
+                        } else {
+                            addSecureFile(
+                                pth.join("/assets", uri),
+                                readFileSync(filename)
+                            )
+                        }
+                }
+                addFolder(assetsDir, "");
             }
-            addFolder(assetsDir, "");
         }
 
         // load js files
@@ -258,64 +287,72 @@ module.exports = {
         }
         archive.addFile(encrypt("pico.db", hash.toString("utf-8")).toString("hex"), encrypt(Buffer.from("{}", "utf-8"), hash.toString("utf-8")));
         var path = "views";
-        if (existsSync(pth.join(directory, path)) && statSync(pth.join(directory, path)).isDirectory()) {
-            swig.setDefaults({
-                cache: "memory",
-                locals: {},
-                cmtControls: [packageInfo.exports?.tags?.commentStart ?? '{#', packageInfo.exports?.tags?.commentEnd ?? '#}'],
-                varControls: [packageInfo.exports?.tags?.variableStart ?? '{{', packageInfo.exports?.tags?.variableEnd ?? '}}'],
-                tagControls: [packageInfo.exports?.tags?.blockStart ?? '{%', packageInfo.exports?.tags?.blockEnd ?? '%}'],
-                autoescape: packageInfo.exports?.view?.autoescape ?? true,
-                loader: swig.loaders.fs(pth.join(directory, path))
-            });
-            jsxLoader.usePreact();
-            jsxLoader.compiler.addUseStrict = false;
-            var templates;
-            templates = {};
-            loadRoute(pth.join(directory, path), "/" + path, /\.(((tag|filter)\.js)|(njk|nunjucks|html|xhtml|tpl|tmpl))$/, (code, name, entryName) => {
-                if (/\.(tag|filter)\.js$/.test(name)) {
-                    extendSwigEnv(swig, name, code);
-                } else {
-                    templates[name] = {
-                        code, name, entryName
-                    };
-                    return; // abort
+        if (hasSwig) {
+            if (existsSync(pth.join(directory, path)) && statSync(pth.join(directory, path)).isDirectory()) {
+                swig.setDefaults({
+                    cache: "memory",
+                    locals: {},
+                    cmtControls: [packageInfo.exports?.tags?.commentStart ?? '{#', packageInfo.exports?.tags?.commentEnd ?? '#}'],
+                    varControls: [packageInfo.exports?.tags?.variableStart ?? '{{', packageInfo.exports?.tags?.variableEnd ?? '}}'],
+                    tagControls: [packageInfo.exports?.tags?.blockStart ?? '{%', packageInfo.exports?.tags?.blockEnd ?? '%}'],
+                    autoescape: packageInfo.exports?.view?.autoescape ?? true,
+                    loader: swig.loaders.fs(pth.join(directory, path))
+                });
+                jsxLoader.usePreact();
+                jsxLoader.compiler.addUseStrict = false;
+                var templates;
+                templates = {};
+                loadRoute(pth.join(directory, path), "/" + path, /\.(((tag|filter)\.js)|(njk|nunjucks|html|xhtml|tpl|tmpl))$/, (code, name, entryName) => {
+                    if (/\.(tag|filter)\.js$/.test(name)) {
+                        extendSwigEnv(swig, name, code);
+                    } else {
+                        templates[name] = {
+                            code, name, entryName
+                        };
+                        return; // abort
+                    }
+                    return code;
+                });
+                var precompiledTemplatesJs = "module.exports = {\n";
+                Object.keys(templates).forEach((key) => {
+                    const { code, name, entryName } = templates[key];
+                    var compiledCode = swig.getCompiled(code.toString("utf-8"), {
+                        filename: name.replace(pth.join(directory, path), "").replace(/^\//, "")
+                    });
+                    precompiledTemplatesJs += `\t${JSON.stringify(name.replace(pth.join(directory, path), "").replace(/^\//, ""))} : ${compiledCode},\n`;
+                })
+                templates = undefined;
+                precompiledTemplatesJs += "}\n";
+                writeFileSync("/tmp/precompiledTemplates.js", precompiledTemplatesJs);
+
+                addSecureFile(
+                    "templates.compiled.js",
+                    getByteCode("templates.compiled.js", precompiledTemplatesJs, (precompiledTemplates) => precompiledTemplates)
+                )
+            }
+        }
+        path = "lib";
+        if (hasLib) {
+            loadRoute(pth.join(directory, path), "/" + path, /\.jsx?$/, (code, name, entryName) => {
+                if (/\.jsx$/.test(name)) {
+                    return jsxLoader.compiler.compile(code);
                 }
                 return code;
             });
-            var precompiledTemplatesJs = "module.exports = {\n";
-            Object.keys(templates).forEach((key) => {
-                const { code, name, entryName } = templates[key];
-                var compiledCode = swig.getCompiled(code.toString("utf-8"), {
-                    filename: name.replace(pth.join(directory, path), "").replace(/^\//, "")
-                });
-                precompiledTemplatesJs += `\t${JSON.stringify(name.replace(pth.join(directory, path), "").replace(/^\//, ""))} : ${compiledCode},\n`;
-            })
-            templates = undefined;
-            precompiledTemplatesJs += "}\n";
-            writeFileSync("/tmp/precompiledTemplates.js", precompiledTemplatesJs);
-
-            addSecureFile(
-                "templates.compiled.js",
-                getByteCode("templates.compiled.js", precompiledTemplatesJs, (precompiledTemplates) => precompiledTemplates)
-            )
         }
-        path = "lib";
-        loadRoute(pth.join(directory, path), "/" + path, /\.jsx?$/, (code, name, entryName) => {
-            if (/\.jsx$/.test(name)) {
-                return jsxLoader.compiler.compile(code);
-            }
-            return code;
-        });
         path = "middlewares";
-        loadRoute(pth.join(directory, path), "/" + path);
+        if (hasMiddlewares) {
+            loadRoute(pth.join(directory, path), "/" + path);
+        }
         path = "routes";
-        loadRoute(pth.join(directory, path), "/" + path, /\.jsx?$/, (code, name, entryName) => {
-            if (/\.jsx$/.test(name)) {
-                return jsxLoader.compiler.compile(code);
-            }
-            return code;
-        });
+        if (hasRoutes) {
+            loadRoute(pth.join(directory, path), "/" + path, /\.jsx?$/, (code, name, entryName) => {
+                if (/\.jsx$/.test(name)) {
+                    return jsxLoader.compiler.compile(code);
+                }
+                return code;
+            });
+        }
     }
     return {
         /**
@@ -436,13 +473,39 @@ module.exports = {
     }
 }
 
-
 /**
  * @param {String} file - path file name
  * @param {PackageInfo} options - path file name
  */
 
 Arrgul.open = async function (file, options) {
+    var proxy =  HttpProxy({});
+    //restream parsed body before proxying
+    // @ts-ignore
+    proxy.on('proxyReq', function(proxyReq, req, res, options) {
+        if(req.auth){
+            proxyReq.setHeader("AUTH-USER", Buffer.from(JSON.stringify(req.auth)).toString("base64"));
+        }
+        if (!req.body || !Object.keys(req.body).length) {
+            return;
+        }
+    
+        var contentType = proxyReq.getHeader('Content-Type');
+        var bodyData;
+        
+        if (contentType === 'application/json') {
+            bodyData = req.rawBody || JSON.stringify(req.body);
+        }else if (contentType === 'application/x-www-form-urlencoded') {
+            bodyData = req.rawBody || qs.stringify(req.body);
+        }else if (contentType && req.rawBody) {
+            bodyData = req.rawBody;
+        }
+    
+        if (bodyData) {
+            proxyReq.setHeader('Content-Length', Buffer.byteLength(bodyData));
+            proxyReq.write(bodyData);
+        }
+    });
     /** @type {import('child_process').ChildProcess | undefined} */
     let worker;
     /** @type {PackageInfo|undefined} */
@@ -452,11 +515,11 @@ Arrgul.open = async function (file, options) {
     var workerStdioEvents = new EventEmitter();
     var getMemory;
 
-    var triggerWorkerAction = (action) => (socket,...data) => new Promise((result, error) => {
+    var triggerWorkerAction = (action) => (socket, ...data) => new Promise((result, error) => {
         var id = action + "." + Date.now().toString(36) + Math.random().toString(36);
         workerAnswerEvents.once(id, (err, data) => err ? error(err) : result(data));
-        if(socket){
-            worker?.send({ type: action, id, data },socket,{ keepOpen: true });
+        if (socket) {
+            worker?.send({ type: action, id, data }, socket, { keepOpen: true });
         } else {
             worker?.send({ type: action, id, data });
         }
@@ -468,37 +531,26 @@ Arrgul.open = async function (file, options) {
     /** @type {AargulRouter} */
     var returnedObject = {};
     /** @type {RequestHandler} */
-    async function application(data, socket, next) {
-        if(worker){
-            // @ts-ignore
-            const privateSocket = await worker?.getSocket(socket);//new PassThrough();
-            // var send = false;
-            sendSocket(privateSocket,data).then(res=>{
-                if(!res){
-                    next(); // if not responded get to next route
-                }else{
-                    if(!socket?.destroyed){
-                        socket?.destroy(); // clean connexion
-                    }
-                }
-            }).catch(err=>{
-                if(/^route.missing(All)?$/.test(err)){
-                    next();
-                }else{
-                    next(err);
-                }
+    async function application({rawBody,url}, incomingMessage, serverResponse, next) {
+        if (worker) {
+            // pass proxy
+            proxy.web(incomingMessage, serverResponse, {
+                // @ts-ignore
+                target: `http://127.0.01:${worker._port}`
             });
-        }else{
+        } else {
             next();
         }
     }
     /** @type {import("express").RequestHandler} */
-    returnedObject.express = (res, req, next) => {
-        request(RequesType.EXPRESS, res, req, next).then((args) => application(...args));
+    returnedObject.express = (req, res, next) => {
+        // @ts-ignore
+        request(RequesType.EXPRESS, req, res, next).then((rawBody) => application(rawBody, req, res,next ));
     }
     /** @type {import("connect").NextHandleFunction} */
-    returnedObject.connect = (...args) => {
-        request(RequesType.CONNECT, ...args).then((args) => application(...args));
+    returnedObject.connect = (req, res, next) => {
+        // @ts-ignore
+        request(RequesType.CONNECT, req, res, next).then((rawBody) => application(rawBody, req, res,next ));
     }
     returnedObject.stop = async () => {
         var isExit = waiter();
@@ -507,9 +559,8 @@ Arrgul.open = async function (file, options) {
         })
         worker?.kill('SIGKILL');
         // @ts-ignore
-        worker?._server.close();
         worker = undefined;
-        if(packageInfo)packageInfo.routes = [];
+        if (packageInfo) packageInfo.routes = [];
         memoryInfo = {
             rss: 0,
             heapTotal: 0,
@@ -521,11 +572,21 @@ Arrgul.open = async function (file, options) {
     }
     /** @param {Object} applicationContext - path file name */
     returnedObject.start = async (applicationContext) => {
+        var port = await new Promise( res => {
+            const srv = createServer();
+            srv.listen(0, () => {
+                // @ts-ignore
+                const port = srv?.address()?.port;
+                srv.close((err) => res(port))
+            });
+        });
+
         worker = fork(pth.join(__dirname, "worker.js"), [
             Buffer.from(JSON.stringify(file)).toString("hex"),
             Buffer.from(JSON.stringify(typeof applicationContext != "object" ? {} : applicationContext)).toString("hex"),
             Buffer.from(JSON.stringify(options)).toString("hex"),
-            getOnlyPackageInfo ? "1" : "0"
+            getOnlyPackageInfo ? "1" : "0",
+            port
         ], {
             // silent : true,
             env: {
@@ -534,53 +595,13 @@ Arrgul.open = async function (file, options) {
                 ...process.env
             }
         });
-        var _server = createServer((socket) => {}).on('error', (err) => {});
-        var address = `${process.platform === 'win32' ? '//./pipe/' : ''}${pth.join(tmpdir(),Date.now().toString(36)+""+Math.random().toString(36))}`;
-        var _sockets = {};
-        _server.listen(address);
-        _server.on("connection", (socket)=>{
-            var init = false;
-            socket.on("data",(chuck)=>{
-                if(!init){
-                    socket.pipe(_sockets[chuck.toString("utf8")][2]);
-                    _sockets[chuck.toString("utf8")][0](_sockets[chuck.toString("utf8")][3]);
-                    init = true;
-                }
-            });
-        })
-        _server.on("close", ()=>{
-            if(existsSync(address)){
-                try {
-                    unlinkSync(address)
-                } catch (error) {
-                    // ignore error
-                }
-            }
-            Object.keys(_sockets).map(id=>{
-                _sockets[id][1](new Error("Server Closed"));
-                delete _sockets[id];
-            })
-        })
         // @ts-ignore
-        worker.getSocket = (socket)=>new Promise((okFn,errFn)=>{
-            var s = new Socket();
-            var id = Date.now().toString(36)+Math.random().toString(36);
-            _sockets[id] = [okFn,errFn,socket,s];
-            s.connect(address, function(){
-                s.write(id);
-            })
-            s.on("close", ()=>{
-                _sockets[id][1](new Error("Server Closed"));
-                delete _sockets[id];
-            })
-        })
-        // @ts-ignore
-        worker._server = _server;
+        worker._port = port;
         worker?.stdout?.on("data", (e) => {
-            workerStdioEvents.emit("stdout",e)
+            workerStdioEvents.emit("stdout", e)
         });
-        worker?.stderr?.on("data", (e) =>{
-            workerStdioEvents.emit("stderr",e)
+        worker?.stderr?.on("data", (e) => {
+            workerStdioEvents.emit("stderr", e)
         });
         var initDone;
         let init = new Promise((ok, err) => initDone = { ok, err });
@@ -637,7 +658,7 @@ Arrgul.open = async function (file, options) {
          */
         memory: {
             get() {
-                process.nextTick(async ()=>{
+                process.nextTick(async () => {
                     memoryInfo = await getMemory()
                 });
                 return memoryInfo;
@@ -723,7 +744,7 @@ Arrgul.open = async function (file, options) {
         }
     })
     await returnedObject.start({});
-    
+
     return returnedObject;
 }
 

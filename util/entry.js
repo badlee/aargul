@@ -3,6 +3,31 @@ var Utils = require("./index"),
     Constants = Utils.Constants,
     Methods = require("../methods");
 
+/** 
+ * @typedef Entry
+ * @property {String} entryName
+ * @property {Buffer} rawEntryName
+ * @property {String} name
+ * @property {Buffer} extra
+ * @property {String} comment
+ * @property {Boolean} isDirectory
+ * @property {Buffer} compressedData
+ * @property {Buffer} data
+ * @property {Buffer} header
+ * @property {Object} attr
+ * @property {() => any} getCompressedData
+ * @property {(pass: any) => void} getData
+ * @property {(callback: any, pass: any) => void} getDataAsync
+ * @property {()=>Buffer} packHeader
+ * @property {()=>String} toString
+ * @property {() => {entryName: string; name: string; comment: string; isDirectory: boolean; header: any; compressedData: string; data: string;}} toJSON
+ */
+
+/**
+ * 
+ * @param {Buffer} input 
+ * @returns {Entry}
+ */
 module.exports = function (/*Buffer*/ input) {
     var _entryHeader = new Headers.EntryHeader(),
         _entryName = Buffer.alloc(0),

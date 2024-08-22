@@ -4,7 +4,7 @@ require('./sugar')
 /**
 * @class QueryString
 */
-var QueryString = new Object()
+var QueryString = {}
 
 /**
 * @memberof QueryString

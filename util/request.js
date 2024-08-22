@@ -45,6 +45,7 @@ function mime(req) {
  * @param  {...any} args 
  * @returns {Promise<[Request,import("net").Socket, NextFunction]>}
 */
+var i=0;
 async function requestHandler(type, ...args){
     switch(type){
         case RequesType.CONNECT:
@@ -77,28 +78,45 @@ async function requestHandler(type, ...args){
             const url = req.originalUrl;
             const port = req.socket.localPort == (req.secure ? 443 : 80) ? "" : `:${req.socket.localPort}`;
             req.fullUrl = `${protocol}://${host}${port}${url}`;
+            var ii = 1+(i??0);
+            i = ii;
+            console.log("SEND...",ii,req.fullUrl,Date.now());
             req.socket.on("error",err=>{
-                console.log("ERROR...",err);
+                console.log("ERROR...",ii,req.fullUrl,Date.now(),err);
                 next(err);
             });
-            return [{
-                method: req.method,
+            req.socket.on("close",err=>{
+                console.log("END...",ii,req.fullUrl,Date.now(),err);
+                next(err);
+            });
+            setTimeout(()=>{
+                // req.socket.end();
+            }, 5000)
+            return {
+                reqId : ii,
+                baseUrl : req.baseUrl,
+                body : req.rawBody, // must be raw
                 headers: req.headers,
-                path: req.path,
+                headersDistinct: req.headersDistinct,
+                hostname : req.hostname,
+                httpVersion : req.httpVersion,
                 httpVersionMajor: req.httpVersionMajor,
                 httpVersionMinor: req.httpVersionMinor,
-                query: req.query,
-                body : req.rawBody, // must be raw
-                baseUrl : req.baseUrl,
-                url : req.fullUrl,
-                originalUrl : req.originalUrl,
                 ip : req.ip,
+                method: req.method,
+                originalUrl : req.originalUrl,
+                path: req.path,
                 port : req.socket.localPort,
                 protocol : req.protocol,
+                query: req.query,
+                reqUrl : req.url,
+                rawHeaders : req.rawHeaders,
+                rawTrailers : req.rawTrailers,
+                trailers : req.trailers,
+                trailersDistinct : req.trailersDistinct,
                 secure : req.secure, // req.protocol === 'https',
-                hostname : req.hostname,
-                httpVersion : req.httpVersion
-            },req.socket,next];
+                url : req.fullUrl,
+            };
             break;
         case RequesType.KOA:
             break;

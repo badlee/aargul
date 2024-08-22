@@ -22,7 +22,7 @@ const crcTable = new Uint32Array(256).map((t, c) => {
 
 function Utils(opts) {
     this.sep = pth.sep;
-    this.fs = fsystem;
+    this.fs = {...fsystem}; // prevent FS changes
 
     if (is_Obj(opts)) {
         // custom filesystem
